@@ -6908,6 +6908,45 @@ export default function SmartHub({ session, household }) {
   const householdId = household?.id
   const view = useViewport()
 
+  // ── Hämta om data när sessionen förnyas ──
+  // Varje laddning nedan kör en gång per householdId. Råkar den hämtningen
+  // sammanfalla med att access-token förnyas får de pågående anropen 401 med
+  // den gamla token, felet sväljs av `if (!error)`, och ingenting hämtas om.
+  // Väggen står då tom i dagar medan household_members — som hämtas i App, vid
+  // ett annat tillfälle — fortsätter lyckas, så appen ser frisk ut.
+  //
+  // Det hände på riktigt: 17:30:46 svarade alla tabeller 200, 17:30:47 svarade
+  // samma tabeller 401, och sedan kom inga dataanrop alls på en timme.
+  //
+  // dataEpoch ingår i beroendena för varje laddning. Byts token om görs allt
+  // om med den nya. Samma sak när skärmen varit dold — en kiosk som legat
+  // nere ska inte vakna med gårdagens data.
+  const [dataEpoch, setDataEpoch] = useState(0)
+
+  // En misslyckad hämtning ska synas och göras om, inte försvinna tyst.
+  // Anroparen skickar in vad den heter, så att felet går att hitta i loggen.
+  function loaded(namn, { data, error }, apply) {
+    if (error) {
+      console.error(`[${namn}]`, error.message || error, error.code || "")
+      setTimeout(() => setDataEpoch(n => n + 1), 4000)
+      return
+    }
+    apply(data || [])
+  }
+
+  useEffect(() => {
+    const bump = () => setDataEpoch(n => n + 1)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "TOKEN_REFRESHED" || event === "SIGNED_IN") bump()
+    })
+    const onVisible = () => { if (!document.hidden) bump() }
+    document.addEventListener("visibilitychange", onVisible)
+    return () => {
+      subscription.unsubscribe()
+      document.removeEventListener("visibilitychange", onVisible)
+    }
+  }, [])
+
   // ── UI state ──
   const [tab, setTab] = useState("hem")
   const [showArchive, setShowArchive] = useState(false)
@@ -7062,7 +7101,7 @@ export default function SmartHub({ session, household }) {
       if (p.new && "photo_url" in p.new) setTvPhotoUrl(p.new.photo_url)
     }).subscribe()
     return () => { cancelled = true; supabase.removeChannel(ch) }
-  }, [householdId])
+  }, [householdId, dataEpoch])
 
   // ── Load + subscribe: lists ──
   useEffect(() => {
@@ -7071,7 +7110,7 @@ export default function SmartHub({ session, household }) {
     async function f() {
       const { data, error } = await supabase.from("lists").select("*").eq("household_id", householdId).order("created_at", { ascending: true })
       if (cancelled) return
-      if (!error) setLists(data || [])
+      loaded("lists", { data, error }, setLists)
     }
     f()
     const ch = supabase.channel("lists:" + householdId).on("postgres_changes", {
@@ -7085,7 +7124,7 @@ export default function SmartHub({ session, household }) {
       })
     }).subscribe()
     return () => { cancelled = true; supabase.removeChannel(ch) }
-  }, [householdId])
+  }, [householdId, dataEpoch])
 
   // ── Load + subscribe: todos ──
   useEffect(() => {
@@ -7094,7 +7133,7 @@ export default function SmartHub({ session, household }) {
     async function f() {
       const { data, error } = await supabase.from("todos").select("*").eq("household_id", householdId).order("created_at", { ascending: true })
       if (cancelled) return
-      if (!error) setTodos(data || [])
+      loaded("todos", { data, error }, setTodos)
     }
     f()
     const ch = supabase.channel("todos:" + householdId).on("postgres_changes", {
@@ -7108,7 +7147,7 @@ export default function SmartHub({ session, household }) {
       })
     }).subscribe()
     return () => { cancelled = true; supabase.removeChannel(ch) }
-  }, [householdId])
+  }, [householdId, dataEpoch])
 
   // ── Load + subscribe: calendar_events ──
   useEffect(() => {
@@ -7121,7 +7160,7 @@ export default function SmartHub({ session, household }) {
       const { data, error } = await supabase.from("calendar_events").select("*").eq("household_id", householdId)
         .gte("start_time", from).lte("start_time", to).order("start_time", { ascending: true })
       if (cancelled) return
-      if (!error) setCalEvents(data || [])
+      loaded("calendar_events", { data, error }, setCalEvents)
     }
     f()
     const ch = supabase.channel("events:" + householdId).on("postgres_changes", {
@@ -7135,7 +7174,7 @@ export default function SmartHub({ session, household }) {
       })
     }).subscribe()
     return () => { cancelled = true; supabase.removeChannel(ch) }
-  }, [householdId])
+  }, [householdId, dataEpoch])
 
   // ── Load + subscribe: meals (current week) ──
   useEffect(() => {
@@ -7144,7 +7183,7 @@ export default function SmartHub({ session, household }) {
     async function f() {
       const { data, error } = await supabase.from("meals").select("*").eq("household_id", householdId).eq("week_start_date", currentWeekStart)
       if (cancelled) return
-      if (!error) setMeals(data || [])
+      loaded("meals", { data, error }, setMeals)
     }
     f()
     const ch = supabase.channel("meals:" + householdId + ":" + currentWeekStart).on("postgres_changes", {
@@ -7169,7 +7208,7 @@ export default function SmartHub({ session, household }) {
     supabase.from("household_members").select("user_id,role,joined_at,display_name,theme").eq("household_id", householdId)
       .then(({ data }) => { if (!cancelled && data) setMembers(data) })
     return () => { cancelled = true }
-  }, [householdId])
+  }, [householdId, dataEpoch])
 
   // ── Load: mitt eget tema (mobil) ──
   useEffect(() => {
@@ -7193,7 +7232,7 @@ export default function SmartHub({ session, household }) {
       if (p.new?.tv_theme && THEMES[p.new.tv_theme]) setTvTheme(p.new.tv_theme)
     }).subscribe()
     return () => { cancelled = true; supabase.removeChannel(ch) }
-  }, [householdId])
+  }, [householdId, dataEpoch])
 
   // ── Load + subscribe: countdowns ──
   useEffect(() => {
@@ -7217,7 +7256,7 @@ export default function SmartHub({ session, household }) {
       })
     }).subscribe()
     return () => { cancelled = true; supabase.removeChannel(ch) }
-  }, [householdId])
+  }, [householdId, dataEpoch])
 
   // ── Load + subscribe: reward_charts ──
   // Realtime är hela poängen här: barnet trycker på väggen, och det ska synas
@@ -7239,7 +7278,7 @@ export default function SmartHub({ session, household }) {
       })
     }).subscribe()
     return () => { cancelled = true; supabase.removeChannel(ch) }
-  }, [householdId])
+  }, [householdId, dataEpoch])
 
   // ── Load + subscribe: shopping_items ──
   useEffect(() => {
@@ -7263,7 +7302,7 @@ export default function SmartHub({ session, household }) {
       })
     }).subscribe()
     return () => { cancelled = true; supabase.removeChannel(ch) }
-  }, [householdId])
+  }, [householdId, dataEpoch])
 
   // ── Load + subscribe: activity_log ──
   useEffect(() => {
@@ -7282,7 +7321,7 @@ export default function SmartHub({ session, household }) {
       setActivity(prev => prev.some(a => a.id === p.new.id) ? prev : [p.new, ...prev].slice(0, 50))
     }).subscribe()
     return () => { cancelled = true; supabase.removeChannel(ch) }
-  }, [householdId])
+  }, [householdId, dataEpoch])
 
   // Logga aktivitet (fire-and-forget)
   function logActivity(action, entityType, entityId, description) {
