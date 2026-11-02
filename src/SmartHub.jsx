@@ -1948,6 +1948,71 @@ function DayModal({ open, date, events, persons, onClose, onAddEvent, onEditEven
   )
 }
 
+// Ny händelse direkt på väggen. Mobilformuläret bygger på vanliga textfält och
+// tidsväljare, och väggen har inget tangentbord — så där gick det inte att
+// skriva alls. Här väljs tiden med knappar och titeln skrivs på samma virtuella
+// tangentbord som inköpslistan använder. Plats, återkommande och påminnelser
+// får man fixa i mobilen; på väggen räcker vad och när.
+const TV_QUICK_TIMES = ["Heldag", "08:00", "10:00", "12:00", "15:00", "16:00", "17:00", "18:00", "19:00"]
+
+function TvQuickEvent({ date, onSave, onClose }) {
+  const [title, setTitle] = useState("")
+  const [time, setTime] = useState("Heldag")
+  const [saving, setSaving] = useState(false)
+  if (!date) return null
+  const key = fmtDate(date)
+  const dateStr = formatDate(dayBounds(key).from, { weekday: "long", day: "numeric", month: "long" })
+
+  async function submit(text) {
+    if (saving || !text) return
+    setSaving(true)
+    const allDay = time === "Heldag"
+    // Heldag följer samma form som mobilformuläret: midnatt till 23:59 svensk
+    // tid. Annars en timme, så att eventet inte blir nollängt.
+    const start = toISO(key, allDay ? "00:00" : time)
+    const end = allDay
+      ? toISO(key, "23:59", 59)
+      : new Date(new Date(start).getTime() + 60 * 60 * 1000).toISOString()
+    await onSave({ title: text, start_time: start, end_time: end, all_day: allDay, icon: suggestIcon(text) })
+    setSaving(false)
+  }
+
+  const header = (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontFamily: "Comfortaa, sans-serif", fontSize: 18, fontWeight: 700, color: t.text, textTransform: "capitalize", marginBottom: 8 }}>
+        Ny händelse · {dateStr}
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {TV_QUICK_TIMES.map(tm => (
+          <button key={tm} onClick={() => setTime(tm)} style={{
+            padding: "10px 16px", borderRadius: 20, cursor: "pointer",
+            fontFamily: "Nunito, sans-serif", fontSize: 16, fontWeight: 700,
+            background: time === tm ? ACCENT.calendar : `${ACCENT.calendar}12`,
+            color: time === tm ? "#fff" : ACCENT.calendar,
+            border: `1px solid ${ACCENT.calendar}40`,
+          }}>{tm}</button>
+        ))}
+      </div>
+    </div>
+  )
+
+  return createPortal(
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 9998, background: "rgba(0,0,0,0.35)" }}>
+      <VirtualKeyboard
+        value={title}
+        onChange={setTitle}
+        onSubmit={submit}
+        onClose={onClose}
+        placeholder="Vad händer?"
+        submitLabel={saving ? "Sparar…" : "✓ Spara"}
+        accent={ACCENT.calendar}
+        header={header}
+      />
+    </div>,
+    document.body
+  )
+}
+
 // Hem-kalender med toggle: månad eller vecka
 function HomeCalendar({ events, persons, onDayClick, isMobile }) {
   const [view, setView] = useState(() => {
@@ -2547,7 +2612,10 @@ function ShoppingList({ items, onAdd, onToggle, onDelete, onClearChecked }) {
 // Kompakt widget för Hem-vy och TV
 // Virtuellt tangentbord för TV-bruk (Pi-kiosk har inget on-screen keyboard).
 // Renderas som overlay-bottom-sheet.
-function VirtualKeyboard({ value, onChange, onSubmit, onClose, suggestions = [] }) {
+// placeholder/submitLabel/accent/header har inköpslistans värden som standard,
+// så den ser ut som förut. Kalendern på väggen lånar samma tangentbord.
+function VirtualKeyboard({ value, onChange, onSubmit, onClose, suggestions = [], placeholder = "Skriv vara...", submitLabel = "✓ Lägg till", accent, header = null }) {
+  const accentColor = accent || ACCENT.todo
   const [shift, setShift] = useState(false)
   const rows = [
     "1234567890".split(""),
@@ -2588,10 +2656,11 @@ function VirtualKeyboard({ value, onChange, onSubmit, onClose, suggestions = [] 
       boxShadow: "0 -8px 32px rgba(0,0,0,0.15)",
       padding: 12,
     }}>
+      {header}
       {/* Inputfält + förslag */}
       <div style={{ marginBottom: 10, display: "flex", gap: 8, alignItems: "center" }}>
-        <div style={{ flex: 1, background: t.card, border: `2px solid ${ACCENT.todo}`, borderRadius: 12, padding: "12px 16px", fontSize: 20, fontFamily: "Nunito, sans-serif", color: t.text, minHeight: 28 }}>
-          {value || <span style={{ color: t.textMuted }}>Skriv vara...</span>}
+        <div style={{ flex: 1, background: t.card, border: `2px solid ${accentColor}`, borderRadius: 12, padding: "12px 16px", fontSize: 20, fontFamily: "Nunito, sans-serif", color: t.text, minHeight: 28 }}>
+          {value || <span style={{ color: t.textMuted }}>{placeholder}</span>}
         </div>
         <button onClick={tryVoice} style={{ ...keyBase, minWidth: 56, flex: "0 0 auto", background: ACCENT.calendar, color: "#fff", fontSize: 18 }}>🎤</button>
         <button onClick={onClose} style={{ ...keyBase, minWidth: 56, flex: "0 0 auto", background: t.inputBg }}>✕</button>
@@ -2629,9 +2698,9 @@ function VirtualKeyboard({ value, onChange, onSubmit, onClose, suggestions = [] 
         <button
           onClick={() => value.trim() && onSubmit(value.trim())}
           disabled={!value.trim()}
-          style={{ ...keyBase, flex: 2, background: value.trim() ? ACCENT.todo : t.inputBg, color: value.trim() ? "#fff" : t.textMuted, fontWeight: 700 }}
+          style={{ ...keyBase, flex: 2, background: value.trim() ? accentColor : t.inputBg, color: value.trim() ? "#fff" : t.textMuted, fontWeight: 700 }}
         >
-          ✓ Lägg till
+          {submitLabel}
         </button>
       </div>
     </div>
@@ -7028,6 +7097,8 @@ export default function SmartHub({ session, household }) {
   // ── Event-modal: hanterar både skapa och redigera ──
   const [eventModal, setEventModal] = useState({ open: false, date: null, editEvent: null })
   function openAddEvent(date) { setEventModal({ open: true, date, editEvent: null }) }
+  // Väggens variant av "Ny händelse" — se TvQuickEvent.
+  const [tvQuickDate, setTvQuickDate] = useState(null)
   function openEditEvent(ev) { setEventModal({ open: true, date: null, editEvent: ev }) }
   function closeAddEvent() { setEventModal({ open: false, date: null, editEvent: null }) }
 
@@ -8184,10 +8255,20 @@ export default function SmartHub({ session, household }) {
         persons={persons}
         userId={userId}
         onClose={closeDayModal}
-        onAddEvent={(d) => { closeDayModal(); openAddEvent(d) }}
+        onAddEvent={(d) => { closeDayModal(); view === "tv" ? setTvQuickDate(d) : openAddEvent(d) }}
         onEditEvent={(ev) => { closeDayModal(); openEditEvent(ev) }}
         onDeleteEvent={handleDeleteEvent}
       />
+      {tvQuickDate && (
+        <TvQuickEvent
+          date={tvQuickDate}
+          onClose={() => setTvQuickDate(null)}
+          onSave={async ev => {
+            await handleAddEvent({ ...ev, location: null, color: persons[0]?.color || ACCENT.event, shared: true })
+            setTvQuickDate(null)
+          }}
+        />
+      )}
       <AddEventModal
         open={eventModal.open}
         prefillDate={eventModal.date}
