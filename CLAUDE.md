@@ -25,7 +25,7 @@ itererar i småsteg: buggar in, features ut, deploy, testa på väggen, repeat.
   (stor fil).
 - **Backend:** Supabase, project `cubalhwxderwpcalfdzw` (region Stockholm),
   RLS påslagen på allt.
-- **Repo:** github.com/creatly-space/smarthub (privat)
+- **Repo:** github.com/PAF-space/smarthub (privat)
 - **Dev-miljö:** GitHub Codespaces
 - **Deploy:** Vercel, auto-deploy från `main`. Live på smarthub-sigma.vercel.app
 - **Env vars i Vercel:** `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
